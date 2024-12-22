@@ -1,0 +1,281 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Card from "../components/Card.astro";
+---
+
+<style is:global>
+    #video {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100vh;
+        object-fit: cover;
+    }
+    #overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100vh;
+        pointer-events: none;
+    }
+    #search {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 1;
+        background-color: aquamarine;
+    }
+    datalist {
+        display: none;
+        background-color: wheat;
+
+        & option {
+            padding: 5px;
+            cursor: pointer;
+        }
+    }
+    #geo-points p {
+        padding: 5px;
+    }
+</style>
+
+<Layout title="Welcome to Astro.">
+    <main>
+        <h1>GeoCam</h1>
+
+        <video id="video" autoplay></video>
+        <canvas id="overlay"></canvas>
+        <div id="search">
+            <form>
+                <input
+                    type="search"
+                    placeholder="Search..."
+                    class="form-control"
+                    
+                />
+                <datalist id="addresses"></datalist>
+            </form>
+
+            <div id="geo-points"></div>
+        </div>
+    </main>
+</Layout>
+
+<script>
+    let pois = JSON.parse(localStorage.getItem("pois")) || [];
+    // const pois = [
+    //     { lat: 48.60911, lon: -3.5751, name: "Plufur" },
+    //     { lat: 48.655331, lon: -3.63125, name: "Plestin" },
+    //     { name: "Plédran", lat: 48.4453, lon: -2.74591 },
+    //     { name: "Ploeuc", lat: 48.34679, lon: -2.75604 },
+    //     { name: "Plaintel", lat: 48.407452, lon: -2.81679 },
+    // ];
+
+    let userPosition = { latitude: 0, longitude: 0 };
+    let userHeading = 0;
+
+    // Accès à la caméra
+    async function startCamera() {
+        try {
+            // camera back
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment" },
+            });
+            // caméra 2
+
+            document.getElementById("video").srcObject = stream;
+        } catch (err) {
+            console.error("Erreur d'accès à la caméra : ", err);
+        }
+    }
+
+    // autocomplete search
+    function autocompleteSearch() {
+        const search = document.querySelector("input[type=search]");
+        search.addEventListener("input", (e) => {
+            const value = e.target.value;
+            // min 3 characters
+            if (value && value.length > 2) {
+                // fetch data as curl "https://api-adresse.data.gouv.fr/search/?q=8+bd+du+port"
+                fetch(
+                    `https://geo.api.gouv.fr/communes?nom=${value}&fields=fields=code,nom,codeDepartement,mairie&boost=population&limit=5`,
+                )
+                    .then((response) => response.json())
+                    .then((data) => {
+                        console.log(data);
+                        // print under search input
+                        const datalist = document.getElementById("addresses");
+                        datalist.innerHTML = "";
+                        data.forEach((address) => {
+                            const option = document.createElement("option");
+                            option.value = address.nom;
+                            option.textContent = `${address.nom} (${address.codeDepartement})`;
+                            datalist.appendChild(option);
+
+                            // ajouter un point geo au click
+                            option.onclick = () => {
+                                console.log(address);
+                                addGeoPoints(
+                                    address.nom,
+                                    address.mairie.coordinates[1],
+                                    address.mairie.coordinates[0],
+                                );
+                            };
+                        });
+                        // show datalist
+                        datalist.style.display = "block";
+                    });
+            }
+        });
+    }
+
+    // add geo points to local storage
+    function addGeoPoints(name, lat, lon) {
+        const search = document.querySelector("input[type=search]");
+
+        // don't add if already exists
+        if (pois.find((poi) => poi.name === name)) {
+            search.value = "";
+            return;
+        }
+        pois.push({ name: name, lat: lat, lon: lon });
+        // add to local storage
+        localStorage.setItem("pois", JSON.stringify(pois));
+
+        search.value = "";
+
+        // print geo points
+        printGeoPoints();
+    }
+
+    // print geo points
+    function printGeoPoints() {
+        const geoPoints = document.getElementById("geo-points");
+        geoPoints.innerHTML = "";
+        let pois = JSON.parse(localStorage.getItem("pois"));
+        // sort by name
+        pois.sort((a, b) => a.name.localeCompare(b.name));
+        pois.forEach((poi) => {
+            const p = document.createElement("p");
+            p.innerHTML = poi.name + ` <i class="bi bi-file-minus"></i>`;
+            p.querySelector("i").onclick = () => {
+                // remove from local storage
+                pois = pois.filter((item) => item.name !== poi.name);
+                localStorage.setItem("pois", JSON.stringify(pois));
+                // print geo points
+                printGeoPoints();
+            };
+            geoPoints.appendChild(p);
+        });
+    }
+
+    // Fonction pour obtenir la position de l'utilisateur
+    function getGeolocation() {
+        if ("geolocation" in navigator) {
+            navigator.geolocation.watchPosition((position) => {
+                userPosition = {
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                };
+            });
+        }
+    }
+
+    // Fonction pour obtenir l'orientation de l'utilisateur
+    function getOrientation() {
+        if (window.DeviceOrientationEvent) {
+            window.addEventListener("deviceorientation", (event) => {
+                if (event.alpha !== null) {
+                    userHeading = event.alpha; // Orientation en degrés
+                }
+            });
+        }
+    }
+
+    // Calcul de la distance et de l'angle entre l'utilisateur et un POI
+    function calculateAngleAndDistance(poi) {
+        const toRad = (deg) => (deg * Math.PI) / 180;
+        const deltaLat = toRad(poi.lat - userPosition.latitude);
+        const deltaLon = toRad(poi.lon - userPosition.longitude);
+
+        // Distance approximative en km (Haversine formula simplifiée)
+        const distance =
+            6371 *
+            Math.acos(
+                Math.cos(toRad(userPosition.latitude)) *
+                    Math.cos(toRad(poi.lat)) *
+                    Math.cos(deltaLon) +
+                    Math.sin(toRad(userPosition.latitude)) *
+                        Math.sin(toRad(poi.lat)),
+            );
+
+        // Angle entre l'utilisateur et le POI
+        const y = Math.sin(deltaLon) * Math.cos(toRad(poi.lat));
+        const x =
+            Math.cos(toRad(userPosition.latitude)) * Math.sin(toRad(poi.lat)) -
+            Math.sin(toRad(userPosition.latitude)) *
+                Math.cos(toRad(poi.lat)) *
+                Math.cos(deltaLon);
+        const angle = ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+        console.log("ici", distance, angle);
+
+        return { distance, angle };
+    }
+
+    // Fonction pour afficher les POIs sur le canvas si dans le champ de vision
+    function displayPOIs() {
+        const overlay = document.getElementById("overlay");
+        const ctx = overlay.getContext("2d");
+
+        // Redimensionner le canvas
+        overlay.width = overlay.clientWidth;
+        overlay.height = overlay.clientHeight;
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+        pois.forEach((poi) => {
+            const { distance, angle } = calculateAngleAndDistance(poi);
+
+            // Définir le champ de vision (~90° à gauche et à droite de la direction)
+            const leftLimit = (userHeading - 45 + 360) % 360;
+            const rightLimit = (userHeading + 45) % 360;
+
+            const isVisible =
+                (leftLimit < rightLimit &&
+                    angle >= leftLimit &&
+                    angle <= rightLimit) ||
+                (leftLimit > rightLimit &&
+                    (angle >= leftLimit || angle <= rightLimit));
+
+            // Afficher le POI si dans le champ de vision et à une distance < 25km
+            const maxDsitance = 25;
+            if (isVisible && distance < maxDsitance) {
+                const x = (angle - userHeading + 90) * (overlay.width / 90);
+                const y = overlay.height / 2;
+
+                ctx.font = "30px Arial";
+                ctx.fillText("📍", x, y);
+                ctx.font = "15px Arial";
+                ctx.fillText(
+                    `${poi.name} (${distance.toFixed(1)} km)`,
+                    x,
+                    y + 30,
+                );
+            }
+        });
+    }
+
+    
+
+    printGeoPoints();
+    autocompleteSearch();
+
+    // Démarrer la caméra, la géolocalisation et l'orientation
+    startCamera();
+    getGeolocation();
+    getOrientation();
+
+    // Mise à jour des POIs toutes les 100ms
+    setInterval(displayPOIs, 100);
+</script>
