@@ -154,7 +154,8 @@ import Card from "../components/Card.astro";
     function printGeoPoints() {
         const geoPoints = document.getElementById("geo-points");
         geoPoints.innerHTML = "";
-        let pois = JSON.parse(localStorage.getItem("pois"));
+        let pois = JSON.parse(localStorage.getItem("pois")) || [];
+
         // sort by name
         pois.sort((a, b) => a.name.localeCompare(b.name));
         pois.forEach((poi) => {
@@ -277,5 +278,5 @@ import Card from "../components/Card.astro";
     getOrientation();
 
     // Mise à jour des POIs toutes les 100ms
-    setInterval(displayPOIs, 100);
+    setInterval(displayPOIs, 1000);
 </script>
